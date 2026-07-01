@@ -328,7 +328,7 @@ def _extract_freq_from_applied_voltage(applied_voltage) -> float | None:
             period = float(arr[1])
             if period != 0:
                 return 1.0 / period
-    except Exception:
+    except (TypeError, ValueError, IndexError):
         return None
     return None
 
