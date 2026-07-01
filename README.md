@@ -1,55 +1,114 @@
-# IonMonger 2
+# IonMonger EIS GUI
 
-A drift-diffusion model for ion migration and charge carrier transport across a planar perovskite solar cell (PSC).
+This repository now includes a beginner-friendly Python desktop application for running simple electrochemical impedance spectroscopy (EIS) simulations with manual parameter entry, interactive plots, and CSV/PNG export.
 
-This code can be used to simulate the internal state of a PSC over time. The three core layers of a PSC, namely the electron transport layer, perovskite absorber layer and hole transport layer, are modelled explicitly in one spatial dimension. The model variables are the electric potential, halide ion vacancies (existing only within the perovskite layer), electrons (within the ETL and perovskite layers) and holes (within the perovskite and HTL). A variety of experimental protocols can be simulated, including changes in the applied voltage and/or illumination intensity that occur over timescales on the order of microseconds to hours and impedance spectroscopy. The code also outputs the current density and voltage which can be used to plot the current-voltage characteristics of a PSC, including current-voltage hysteresis due to the movement of halide ion vacancies. Please read the [GUIDE](GUIDE.md) to get started.
+The GUI is intentionally lightweight and self-contained so that it can run even when direct integration with the full MATLAB-based IonMonger workflow is not available.
 
-For details of changes to the code since the first release, see the Changelog on the [IonMonger Wiki](https://github.com/PerovskiteSCModelling/IonMonger/wiki).
+## What the app does
 
+The desktop app lets you:
 
-# Use Cases
+- enter EIS parameters manually
+- run a simple equivalent-circuit simulation
+- view Nyquist and Bode plots
+- export the simulated spectrum to CSV
+- save the current plots as a PNG image
 
-This code is intended for use by researchers in the field of perovskite solar cells. Example use cases include:
+The first version uses a standard demonstration circuit:
 
-- simulating current-voltage curves, with the ability to change key material properties in order to investigate trends in performance and the extent of hysteresis
-- simulating photo-current or photo-voltage transients to investigate the effects of halide ion migration
-- visualising the effects of halide ion migration on the internal electrical state of a PSC
-- simulating impedance spectra, predicting and analysing the effects of material properties
+- `Rs + (Rct || Cdl)`
+- optional Warburg diffusion element
 
-The authors of this code published an investigation into how material properties of the transport layers affect perovskite solar cell performance in [Energy & Environmental Science](https://doi.org/10.1039/C8EE01576G), while working at the Universities of Southampton, Bath and Portsmouth.
+## Project layout
 
+- `/src/app.py` - main entry point
+- `/src/gui/` - PySide6 GUI code
+- `/src/sim/` - simulation logic
+- `/src/io/` - CSV export helpers
+- `/tests/` - lightweight simulation tests
 
-# Requirements and Other Information
+## Installation
+
+From the repository root:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+On Windows PowerShell, activate the environment with:
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+## Run the desktop app
+
+Recommended:
+
+```bash
+python src/app.py
+```
+
+You can also run:
+
+```bash
+python -m src.app
+```
+
+## Parameters
+
+- **Rs (Ω)** - series resistance
+- **Rct (Ω)** - charge-transfer resistance
+- **Cdl (F)** - double-layer capacitance
+- **Enable Warburg element** - adds a simple diffusion tail
+- **Warburg σ** - diffusion strength used when Warburg is enabled
+- **f min (Hz)** - lowest frequency in the sweep
+- **f max (Hz)** - highest frequency in the sweep
+- **Points / decade** - number of simulated frequencies per decade
+
+The default values are chosen so a beginner can press **Run simulation** immediately and see a valid spectrum.
+
+## Exported output
+
+CSV export includes these columns:
+
+- `frequency_hz`
+- `Z_real_ohm`
+- `Z_imag_ohm`
+- `Z_mag_ohm`
+- `Z_phase_deg`
+
+Plot export saves the currently displayed figure as a PNG image.
+
+## Running tests
+
+The repository now includes lightweight Python tests for the simulation core:
+
+```bash
+pytest
+```
+
+## Troubleshooting
+
+- **`No module named PySide6`**: activate your virtual environment and run `pip install -r requirements.txt`.
+- **The window does not open on Linux**: make sure a desktop session is available; GUI apps usually do not open in headless terminals.
+- **Invalid input message**: check that all numeric fields contain numbers and that `f min` is smaller than `f max`.
+- **MATLAB files are still in the repo**: they are kept for the original IonMonger codebase and documentation.
+
+## Legacy IonMonger MATLAB code
+
+This repository also contains the original MATLAB-based IonMonger code for perovskite solar-cell simulations.
 
 Requirements: MATLAB (version R2021a).
 
-This code was first created at the University of Southampton in 2016. See [AUTHORS](AUTHORS.md) for a list of contributors and [LICENSE](LICENSE) for the conditions of use.
+Please read the [GUIDE](GUIDE.md) for the MATLAB workflow. The main legacy entry points are:
 
-If you encounter a problem or any unexpected results, please create an Issue on the GitHub website, add details of the problem (including the error message and MATLAB version number) and attach the parameters.m file in use when the problem occurred. For other enquiries, please contact N.E.Courtier(at)soton.ac.uk.
+- `master.m` for running a single simulation
+- `parameters.m` for setting the inputs to the simulation
+- `reset_path.m` for adding subfunctions to the MATLAB path
+- `IonMongerLite.mlx` for the original MATLAB-friendly interface
 
-Some features of the code (for example, IS_solver.m and animate_sections.m) will make use of the Parallel Computing Toolbox and the Image Processing Toolbox for increased performance but can still run if the toolboxes are not installed.
-
-
-# How to Cite this Code
-
-Please cite the release paper published in the [Journal of Computational Electronics](https://link.springer.com/article/10.1007/s10825-019-01396-2) by using the [citation.bib](citation.bib) file.
-
-
-# Technical Features
-
-This code is based on the finite element scheme first presented in our paper in [Applied Mathematical Modelling](https://doi.org/10.1016/j.apm.2018.06.051) and is performed on a non-uniform ("tanh") spatial grid.
-
-Files in the main folder:
-  - master.m for running a single simulation
-  - parameters.m for setting the inputs to the simulation
-  - reset_path.m adds all subfunctions to the MATLAB path
-  - IonMongerLite.mlx for running simulations from a user-friendly interface
-
-The Code/ folder contains all subfunctions, including
-  - a function to turn a list of instructions into a protocol for the light or applied voltage
-  - functions that provide the ability to find the steady-state Voc and simulate open-circuit conditions
-  - a function to plot current-voltage (`J`-`V`) data as well as the recombination currents (`Jl`, `Jr`)
-
-The solution is saved in dimensional form into one output file, which also contains the input data.
-
-The Tests/ folder is for developers and contains a set of tests to check the consistency of future updates.
+If you encounter a MATLAB-specific problem, please create an issue with details including the error message and MATLAB version number.
