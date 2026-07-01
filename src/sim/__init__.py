@@ -1,1 +1,1 @@
-"""Simulation helpers for simple EIS demonstrations."""
+"""Simulation helpers for IonMonger MATLAB bridge and GUI analysis."""

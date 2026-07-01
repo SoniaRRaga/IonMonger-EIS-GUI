@@ -6,86 +6,70 @@ import numpy as np
 
 
 @dataclass(frozen=True)
-class SimulationParameters:
-    rs_ohm: float
-    rct_ohm: float
-    cdl_f: float
-    enable_warburg: bool
-    warburg_sigma: float
-    f_min_hz: float
-    f_max_hz: float
-    points_per_decade: int
-
-
-@dataclass(frozen=True)
 class SimulationResult:
-    frequency_hz: np.ndarray
-    impedance_ohm: np.ndarray
+    frequency_hz: np.ndarray | None = None
+    impedance_ohm: np.ndarray | None = None
+    jv_voltage_v: np.ndarray | None = None
+    jv_current_ma_cm2: np.ndarray | None = None
 
     @property
     def z_real_ohm(self) -> np.ndarray:
-        return self.impedance_ohm.real
+        return np.array([]) if self.impedance_ohm is None else self.impedance_ohm.real
 
     @property
     def z_imag_ohm(self) -> np.ndarray:
-        return self.impedance_ohm.imag
-
-    @property
-    def z_mag_ohm(self) -> np.ndarray:
-        return np.abs(self.impedance_ohm)
+        return np.array([]) if self.impedance_ohm is None else self.impedance_ohm.imag
 
     @property
     def z_phase_deg(self) -> np.ndarray:
-        return np.angle(self.impedance_ohm, deg=True)
+        return np.array([]) if self.impedance_ohm is None else np.angle(self.impedance_ohm, deg=True)
+
+    @property
+    def capacitance_f(self) -> np.ndarray:
+        if self.impedance_ohm is None or self.frequency_hz is None:
+            return np.array([])
+        y = 1.0 / self.impedance_ohm
+        omega = 2.0 * np.pi * self.frequency_hz
+        return -np.imag(y) / omega
 
 
-def default_parameters() -> SimulationParameters:
-    return SimulationParameters(
-        rs_ohm=10.0,
-        rct_ohm=100.0,
-        cdl_f=1e-5,
-        enable_warburg=False,
-        warburg_sigma=20.0,
-        f_min_hz=1.0,
-        f_max_hz=1e5,
-        points_per_decade=10,
-    )
+def validate_inputs(values: dict[str, object]) -> None:
+    mode = str(values.get("measurement_mode", "eis"))
+    if mode not in {"eis", "jv"}:
+        raise ValueError("Measurement mode must be either 'eis' or 'jv'.")
+
+    if not str(values.get("matlab_command", "")).strip():
+        raise ValueError("MATLAB command cannot be empty.")
+
+    if not str(values.get("ionmonger_root", "")).strip():
+        raise ValueError("IonMonger root folder is required.")
+
+    _require_positive(values, "N", integer=True)
+    _require_positive(values, "atol")
+    _require_positive(values, "rtol")
+
+    if mode == "eis":
+        _require_positive(values, "eis_fmin")
+        _require_positive(values, "eis_fmax")
+        _require_positive(values, "eis_vac")
+        _require_non_negative(values, "eis_nfreq", integer=True)
+        _require_positive(values, "eis_nwaves", integer=True)
+        fmin = float(values["eis_fmin"])
+        fmax = float(values["eis_fmax"])
+        if fmin >= fmax:
+            raise ValueError("EIS fmin must be smaller than fmax.")
+
+    if mode == "jv":
+        _require_positive(values, "jv_scan_rate")
 
 
-def simulate_eis(params: SimulationParameters) -> SimulationResult:
-    _validate_parameters(params)
-
-    decades = np.log10(params.f_max_hz) - np.log10(params.f_min_hz)
-    point_count = max(2, int(np.ceil(decades * params.points_per_decade)) + 1)
-    frequency_hz = np.logspace(np.log10(params.f_min_hz), np.log10(params.f_max_hz), point_count)
-    omega = 2.0 * np.pi * frequency_hz
-
-    capacitor_branch = 1j * omega * params.cdl_f
-    parallel_impedance = 1.0 / ((1.0 / params.rct_ohm) + capacitor_branch)
-    impedance = params.rs_ohm + parallel_impedance
-
-    if params.enable_warburg:
-        impedance = impedance + _warburg_impedance(params.warburg_sigma, omega)
-
-    return SimulationResult(frequency_hz=frequency_hz, impedance_ohm=impedance)
+def _require_positive(values: dict[str, object], key: str, integer: bool = False) -> None:
+    number = int(values[key]) if integer else float(values[key])
+    if number <= 0:
+        raise ValueError(f"{key} must be greater than zero.")
 
 
-def _validate_parameters(params: SimulationParameters) -> None:
-    if params.rs_ohm < 0:
-        raise ValueError("Rs must be zero or positive.")
-    if params.rct_ohm <= 0:
-        raise ValueError("Rct must be greater than zero.")
-    if params.cdl_f <= 0:
-        raise ValueError("Cdl must be greater than zero.")
-    if params.f_min_hz <= 0 or params.f_max_hz <= 0:
-        raise ValueError("Frequencies must be greater than zero.")
-    if params.f_min_hz >= params.f_max_hz:
-        raise ValueError("Minimum frequency must be smaller than maximum frequency.")
-    if params.points_per_decade < 2:
-        raise ValueError("Points per decade must be at least 2.")
-    if params.enable_warburg and params.warburg_sigma <= 0:
-        raise ValueError("Warburg sigma must be greater than zero when enabled.")
-
-
-def _warburg_impedance(sigma: float, omega: np.ndarray) -> np.ndarray:
-    return sigma / np.sqrt(1j * omega)
+def _require_non_negative(values: dict[str, object], key: str, integer: bool = False) -> None:
+    number = int(values[key]) if integer else float(values[key])
+    if number < 0:
+        raise ValueError(f"{key} must be non-negative.")
