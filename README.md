@@ -1,35 +1,39 @@
 # IonMonger EIS GUI
 
-This repository now includes a beginner-friendly Python desktop application for running simple electrochemical impedance spectroscopy (EIS) simulations with manual parameter entry, interactive plots, and CSV/PNG export.
-
-The GUI is intentionally lightweight and self-contained so that it can run even when direct integration with the full MATLAB-based IonMonger workflow is not available.
+This repository includes a Python desktop GUI that runs **real IonMonger drift-diffusion simulations** through MATLAB (`master.m` + generated `parameters.m`).
 
 ## What the app does
 
-The desktop app lets you:
+- Runs IonMonger non-interactively with `matlab -batch`
+- Supports both protocol modes:
+  - **EIS** via `applied_voltage = {'impedance', fmin, fmax, Vdc, Vac, nfreq, nwaves}`
+  - **JV/transient** via a generated sweep protocol
+- Exposes a schema-driven parameter UI with grouped tabs:
+  - Protocol & measurement mode
+  - EIS settings
+  - Solver/numerics
+  - Layer/material/device
+  - Statistics model for ETL/HTL
+- Lets you search parameters by name
+- Imports/exports full parameter sets as JSON
+- Plots:
+  - JV (J vs V)
+  - Nyquist (`-Imag(Z)` vs `Real(Z)`)
+  - Bode phase vs frequency
+  - Bode capacitance vs frequency
 
-- enter EIS parameters manually
-- run a simple equivalent-circuit simulation
-- view Nyquist and Bode plots
-- export the simulated spectrum to CSV
-- save the current plots as a PNG image
+Capacitance is computed as:
 
-The first version uses a standard demonstration circuit:
+`Y = 1/Z`, `C(f) = -imag(Y)/(2*pi*f)`.
 
-- `Rs + (Rct || Cdl)`
-- optional Warburg diffusion element
+## MATLAB prerequisite
 
-## Project layout
+- MATLAB must be installed and available on PATH (default command: `matlab`), or provide a custom command in the GUI.
+- The GUI requires an **IonMonger root folder** containing `master.m`, `parameters_template.m`, and `Code/`.
 
-- `/src/app.py` - main entry point
-- `/src/gui/` - PySide6 GUI code
-- `/src/sim/` - simulation logic
-- `/src/io/` - CSV export helpers
-- `/tests/` - lightweight simulation tests
+Tested path is the beginner-friendly subprocess route (`matlab -batch`) so MATLAB Engine setup is not required.
 
 ## Installation
-
-From the repository root:
 
 ```bash
 python -m venv .venv
@@ -38,77 +42,49 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-On Windows PowerShell, activate the environment with:
+Windows PowerShell:
 
 ```powershell
 .venv\Scripts\Activate.ps1
 ```
 
-## Run the desktop app
-
-Recommended:
+## Run
 
 ```bash
 python src/app.py
 ```
 
-You can also run:
+## Workflow example (impedance)
 
-```bash
-python -m src.app
-```
+1. Set **IonMonger root** to the folder containing `master.m`.
+2. Keep **Measurement mode = eis**.
+3. Configure `fmin`, `fmax`, `Vdc`, `Vac`, `nfreq`, `nwaves`.
+4. Click **Run IonMonger**.
+5. The status bar reports: `Running MATLAB` → `Parsing output` → `Done`.
 
-## Parameters
+For reduced EIS output (`reduced_output = true`), the GUI reads `freqs`, `R`, and `X` from `sol` and builds `Z = R + iX`.
 
-- **Rs (Ω)** - series resistance
-- **Rct (Ω)** - charge-transfer resistance
-- **Cdl (F)** - double-layer capacitance
-- **Enable Warburg element** - adds a simple diffusion tail
-- **Warburg σ** - diffusion strength used when Warburg is enabled
-- **f min (Hz)** - lowest frequency in the sweep
-- **f max (Hz)** - highest frequency in the sweep
-- **Points / decade** - number of simulated frequencies per decade
+## Plot and export behavior
 
-The default values are chosen so a beginner can press **Run simulation** immediately and see a valid spectrum.
-
-## Exported output
-
-CSV export includes these columns:
-
-- `frequency_hz`
-- `Z_real_ohm`
-- `Z_imag_ohm`
-- `Z_mag_ohm`
-- `Z_phase_deg`
-
-Plot export saves the currently displayed figure as a PNG image.
-
-## Running tests
-
-The repository now includes lightweight Python tests for the simulation core:
-
-```bash
-pytest
-```
+- JV plot uses `sol.V` and `sol.J`.
+- Nyquist/Bode plots use EIS impedance arrays.
+- CSV export includes EIS and JV columns in one table.
+- Plot export saves the four-panel figure as PNG.
 
 ## Troubleshooting
 
-- **`No module named PySide6`**: activate your virtual environment and run `pip install -r requirements.txt`.
-- **The window does not open on Linux**: make sure a desktop session is available; GUI apps usually do not open in headless terminals.
-- **Invalid input message**: check that all numeric fields contain numbers and that `f min` is smaller than `f max`.
-- **MATLAB files are still in the repo**: they are kept for the original IonMonger codebase and documentation.
+- **`master.m` not found**: verify IonMonger root path.
+- **MATLAB command failed**: verify command in settings (default `matlab`).
+- **`Unable to meet integration tolerances` / `Need a better guess y0`**:
+  - try adjusting `N`, `atol`, `rtol` in Solver/numerics
+  - simplify protocol bounds and perturbation settings
+- **No EIS curve shown**: ensure EIS mode and valid frequencies (`fmin > 0`, `fmax > fmin`, integer `nfreq`).
 
-## Legacy IonMonger MATLAB code
+## Build/package note
 
-This repository also contains the original MATLAB-based IonMonger code for perovskite solar-cell simulations.
+The application remains runnable with `python src/app.py`.
+If you maintain Windows executable packaging in your environment, keep using your existing packaging workflow with this same entry point.
 
-Requirements: MATLAB (version R2021a).
+## Legacy IonMonger references
 
-Please read the [GUIDE](GUIDE.md) for the MATLAB workflow. The main legacy entry points are:
-
-- `master.m` for running a single simulation
-- `parameters.m` for setting the inputs to the simulation
-- `reset_path.m` for adding subfunctions to the MATLAB path
-- `IonMongerLite.mlx` for the original MATLAB-friendly interface
-
-If you encounter a MATLAB-specific problem, please create an issue with details including the error message and MATLAB version number.
+See [GUIDE.md](GUIDE.md) for full IonMonger model and protocol details.

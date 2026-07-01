@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
@@ -7,6 +8,7 @@ from matplotlib.figure import Figure
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QFileDialog,
     QFormLayout,
     QGroupBox,
@@ -16,21 +18,29 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
-    QSpinBox,
+    QScrollArea,
+    QTabWidget,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
 from src.io.exporters import export_spectra_csv
-from src.sim.eis_model import SimulationParameters, default_parameters, simulate_eis
+from src.sim.eis_model import SimulationResult
+from src.sim.ionmonger_backend import run_ionmonger
+from src.sim.parameter_schema import ParameterField, default_values, field_by_key, grouped_schema
 
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("IonMonger EIS GUI")
-        self.resize(1200, 750)
-        self._last_result = None
+        self.setWindowTitle("IonMonger DD GUI")
+        self.resize(1400, 850)
+
+        self._last_result: SimulationResult | None = None
+        self._field_defs = field_by_key()
+        self._widgets: dict[str, QWidget] = {}
+        self._row_labels: dict[str, QLabel] = {}
 
         self._build_ui()
         self._apply_defaults()
@@ -45,190 +55,279 @@ class MainWindow(QMainWindow):
 
         root_layout.addWidget(controls, 0)
         root_layout.addWidget(plot_panel, 1)
-
         self.setCentralWidget(central)
 
     def _build_controls(self) -> QWidget:
-        box = QGroupBox("Simulation Parameters")
+        box = QGroupBox("Drift-diffusion parameters")
         layout = QVBoxLayout(box)
 
-        form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search parameters...")
+        self.search_input.textChanged.connect(self._apply_filter)
+        layout.addWidget(self.search_input)
 
-        self.rs_input = self._line_edit("10", "Series resistance in ohms.")
-        self.rct_input = self._line_edit("100", "Charge-transfer resistance in ohms.")
-        self.cdl_input = self._line_edit("1e-5", "Double-layer capacitance in farads.")
-        self.sigma_input = self._line_edit(
-            "20", "Warburg sigma in ohm·s^-0.5. Used only when enabled."
-        )
-        self.f_min_input = self._line_edit("1", "Minimum frequency in hertz.")
-        self.f_max_input = self._line_edit("1e5", "Maximum frequency in hertz.")
-        self.ppd_input = QSpinBox()
-        self.ppd_input.setRange(2, 200)
-        self.ppd_input.setValue(10)
-        self.ppd_input.setToolTip("Number of points per decade in the frequency sweep.")
-
-        self.warburg_checkbox = QCheckBox("Enable Warburg element")
-        self.warburg_checkbox.setToolTip(
-            "Adds a simple semi-infinite diffusion contribution to the impedance."
-        )
-        self.warburg_checkbox.toggled.connect(self.sigma_input.setEnabled)
-
-        form.addRow("Rs (Ω)", self.rs_input)
-        form.addRow("Rct (Ω)", self.rct_input)
-        form.addRow("Cdl (F)", self.cdl_input)
-        form.addRow(self.warburg_checkbox)
-        form.addRow("Warburg σ", self.sigma_input)
-        form.addRow("f min (Hz)", self.f_min_input)
-        form.addRow("f max (Hz)", self.f_max_input)
-        form.addRow("Points / decade", self.ppd_input)
-
-        layout.addLayout(form)
+        self.tabs = QTabWidget()
+        for group, fields in grouped_schema().items():
+            self.tabs.addTab(self._build_group_tab(fields), group)
+        layout.addWidget(self.tabs, 1)
 
         self.help_label = QLabel(
-            "Tip: defaults produce a standard Randles-style EIS spectrum immediately."
+            "Status flow: Ready → Running MATLAB → Parsing output → Done. "
+            "Bode capacitance uses C(f) = -imag(1/Z)/(2πf)."
         )
         self.help_label.setWordWrap(True)
         layout.addWidget(self.help_label)
 
-        buttons_layout = QVBoxLayout()
-        self.run_button = QPushButton("Run simulation")
+        buttons = QVBoxLayout()
+        self.run_button = QPushButton("Run IonMonger")
         self.reset_button = QPushButton("Reset defaults")
-        self.export_button = QPushButton("Export CSV")
+        self.import_json_button = QPushButton("Import JSON")
+        self.export_json_button = QPushButton("Export JSON")
+        self.export_csv_button = QPushButton("Export CSV")
         self.save_plots_button = QPushButton("Save plots")
 
         self.run_button.clicked.connect(self.run_simulation)
         self.reset_button.clicked.connect(self.reset_defaults)
-        self.export_button.clicked.connect(self.export_csv)
+        self.import_json_button.clicked.connect(self.import_json)
+        self.export_json_button.clicked.connect(self.export_json)
+        self.export_csv_button.clicked.connect(self.export_csv)
         self.save_plots_button.clicked.connect(self.save_plots)
 
-        self.export_button.setEnabled(False)
+        self.export_csv_button.setEnabled(False)
         self.save_plots_button.setEnabled(False)
 
         for button in (
             self.run_button,
             self.reset_button,
-            self.export_button,
+            self.import_json_button,
+            self.export_json_button,
+            self.export_csv_button,
             self.save_plots_button,
         ):
-            buttons_layout.addWidget(button)
+            buttons.addWidget(button)
 
-        buttons_layout.addStretch(1)
-        layout.addLayout(buttons_layout)
+        buttons.addStretch(1)
+        layout.addLayout(buttons)
         return box
+
+    def _build_group_tab(self, fields: list[ParameterField]) -> QWidget:
+        content = QWidget()
+        form = QFormLayout(content)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
+        for field in fields:
+            widget = self._create_widget(field)
+            label = QLabel(field.label)
+            label.setToolTip(field.tooltip)
+            widget.setToolTip(field.tooltip)
+            form.addRow(label, widget)
+            self._widgets[field.key] = widget
+            self._row_labels[field.key] = label
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(content)
+
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.addWidget(scroll)
+        return container
+
+    def _create_widget(self, field: ParameterField) -> QWidget:
+        if field.field_type == "bool":
+            return QCheckBox()
+        if field.field_type == "choice":
+            combo = QComboBox()
+            combo.addItems(list(field.choices))
+            return combo
+        if field.field_type == "multiline":
+            editor = QTextEdit()
+            editor.setMinimumHeight(80)
+            return editor
+        return QLineEdit()
 
     def _build_plot_panel(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout(panel)
 
-        self.figure = Figure(figsize=(8, 6), tight_layout=True)
+        self.figure = Figure(figsize=(9, 7), tight_layout=True)
         self.canvas = FigureCanvasQTAgg(self.figure)
         self.toolbar = NavigationToolbar2QT(self.canvas, self)
 
-        self.ax_nyquist = self.figure.add_subplot(2, 2, 1)
-        self.ax_bode_mag = self.figure.add_subplot(2, 2, 2)
-        self.ax_bode_phase = self.figure.add_subplot(2, 2, 4)
+        self.ax_jv = self.figure.add_subplot(2, 2, 1)
+        self.ax_nyquist = self.figure.add_subplot(2, 2, 2)
+        self.ax_bode_phase = self.figure.add_subplot(2, 2, 3)
+        self.ax_bode_cap = self.figure.add_subplot(2, 2, 4)
 
         layout.addWidget(self.toolbar)
         layout.addWidget(self.canvas)
         return panel
 
-    def _line_edit(self, value: str, tooltip: str) -> QLineEdit:
-        widget = QLineEdit(value)
-        widget.setToolTip(tooltip)
-        return widget
-
     def _apply_defaults(self) -> None:
-        params = default_parameters()
-        self.rs_input.setText(str(params.rs_ohm))
-        self.rct_input.setText(str(params.rct_ohm))
-        self.cdl_input.setText(f"{params.cdl_f:g}")
-        self.warburg_checkbox.setChecked(params.enable_warburg)
-        self.sigma_input.setText(str(params.warburg_sigma))
-        self.sigma_input.setEnabled(params.enable_warburg)
-        self.f_min_input.setText(f"{params.f_min_hz:g}")
-        self.f_max_input.setText(f"{params.f_max_hz:g}")
-        self.ppd_input.setValue(params.points_per_decade)
+        defaults = default_values()
+        for key, field in self._field_defs.items():
+            self._set_widget_value(self._widgets[key], field, defaults[key])
 
     def reset_defaults(self) -> None:
         self._apply_defaults()
         self.statusBar().showMessage("Ready")
 
-    def _read_float(self, field: QLineEdit, label: str) -> float:
-        text = field.text().strip()
-        try:
-            return float(text)
-        except ValueError as exc:
-            raise ValueError(f"{label} must be a number. Received: {text!r}.") from exc
+    def _apply_filter(self, query: str) -> None:
+        text = query.strip().lower()
+        for key, field in self._field_defs.items():
+            visible = not text or text in key.lower() or text in field.label.lower()
+            self._row_labels[key].setVisible(visible)
+            self._widgets[key].setVisible(visible)
 
-    def _read_parameters(self) -> SimulationParameters:
-        return SimulationParameters(
-            rs_ohm=self._read_float(self.rs_input, "Rs"),
-            rct_ohm=self._read_float(self.rct_input, "Rct"),
-            cdl_f=self._read_float(self.cdl_input, "Cdl"),
-            enable_warburg=self.warburg_checkbox.isChecked(),
-            warburg_sigma=self._read_float(self.sigma_input, "Warburg sigma"),
-            f_min_hz=self._read_float(self.f_min_input, "Minimum frequency"),
-            f_max_hz=self._read_float(self.f_max_input, "Maximum frequency"),
-            points_per_decade=self.ppd_input.value(),
-        )
+    def _collect_values(self) -> dict[str, object]:
+        values: dict[str, object] = {}
+        for key, field in self._field_defs.items():
+            raw = self._widget_value(self._widgets[key], field)
+            try:
+                if field.field_type == "float":
+                    values[key] = float(raw)
+                elif field.field_type == "int":
+                    values[key] = int(raw)
+                elif field.field_type == "bool":
+                    values[key] = bool(raw)
+                else:
+                    values[key] = raw
+            except ValueError as exc:
+                raise ValueError(f"{field.label} has an invalid value: {raw!r}") from exc
+        return values
+
+    def _widget_value(self, widget: QWidget, field: ParameterField):
+        if field.field_type == "bool":
+            return bool(widget.isChecked())  # type: ignore[attr-defined]
+        if field.field_type == "choice":
+            return str(widget.currentText())  # type: ignore[attr-defined]
+        if field.field_type == "multiline":
+            return str(widget.toPlainText())  # type: ignore[attr-defined]
+        return str(widget.text()).strip()  # type: ignore[attr-defined]
+
+    def _set_widget_value(self, widget: QWidget, field: ParameterField, value: object) -> None:
+        if field.field_type == "bool":
+            widget.setChecked(bool(value))  # type: ignore[attr-defined]
+            return
+        if field.field_type == "choice":
+            combo: QComboBox = widget  # type: ignore[assignment]
+            index = combo.findText(str(value))
+            combo.setCurrentIndex(max(0, index))
+            return
+        if field.field_type == "multiline":
+            widget.setPlainText(str(value))  # type: ignore[attr-defined]
+            return
+        widget.setText(str(value))  # type: ignore[attr-defined]
 
     def run_simulation(self) -> None:
-        self.statusBar().showMessage("Running...")
+        self.statusBar().showMessage("Running MATLAB")
         try:
-            params = self._read_parameters()
-            self._last_result = simulate_eis(params)
+            values = self._collect_values()
+            result = run_ionmonger(values, status_callback=self._on_backend_status)
+            self._last_result = result
             self._update_plots()
         except ValueError as exc:
             self._last_result = None
-            self.export_button.setEnabled(False)
+            self.export_csv_button.setEnabled(False)
             self.save_plots_button.setEnabled(False)
             self.statusBar().showMessage("Error")
             QMessageBox.warning(self, "Invalid input", str(exc))
             return
         except Exception as exc:  # pragma: no cover - defensive GUI handling
             self._last_result = None
-            self.export_button.setEnabled(False)
+            self.export_csv_button.setEnabled(False)
             self.save_plots_button.setEnabled(False)
             self.statusBar().showMessage("Error")
             QMessageBox.critical(self, "Simulation failed", str(exc))
             return
 
-        self.export_button.setEnabled(True)
+        self.export_csv_button.setEnabled(True)
         self.save_plots_button.setEnabled(True)
         self.statusBar().showMessage("Done")
+
+    def _on_backend_status(self, status) -> None:
+        if status.detail:
+            self.statusBar().showMessage(f"{status.step}: {status.detail}")
+        else:
+            self.statusBar().showMessage(status.step)
 
     def _update_plots(self) -> None:
         result = self._last_result
         if result is None:
             return
 
+        self.ax_jv.clear()
         self.ax_nyquist.clear()
-        self.ax_bode_mag.clear()
         self.ax_bode_phase.clear()
+        self.ax_bode_cap.clear()
 
-        self.ax_nyquist.plot(result.z_real_ohm, -result.z_imag_ohm, color="#1f77b4")
-        self.ax_nyquist.set_title("Nyquist Plot")
-        self.ax_nyquist.set_xlabel("Re(Z) [Ω]")
-        self.ax_nyquist.set_ylabel("-Im(Z) [Ω]")
+        if result.jv_voltage_v is not None and result.jv_current_ma_cm2 is not None:
+            self.ax_jv.plot(result.jv_voltage_v, result.jv_current_ma_cm2, color="#1f77b4")
+        else:
+            self.ax_jv.text(0.5, 0.5, "No JV data", ha="center", va="center", transform=self.ax_jv.transAxes)
+        self.ax_jv.set_title("JV")
+        self.ax_jv.set_xlabel("V [V]")
+        self.ax_jv.set_ylabel("J [mA/cm²]")
+        self.ax_jv.grid(True)
+
+        if result.frequency_hz is not None and result.impedance_ohm is not None:
+            self.ax_nyquist.plot(result.z_real_ohm, -result.z_imag_ohm, color="#ff7f0e")
+            self.ax_bode_phase.semilogx(result.frequency_hz, result.z_phase_deg, color="#2ca02c")
+            self.ax_bode_cap.semilogx(result.frequency_hz, result.capacitance_f, color="#d62728")
+        else:
+            self.ax_nyquist.text(0.5, 0.5, "No EIS data", ha="center", va="center", transform=self.ax_nyquist.transAxes)
+            self.ax_bode_phase.text(0.5, 0.5, "No EIS data", ha="center", va="center", transform=self.ax_bode_phase.transAxes)
+            self.ax_bode_cap.text(0.5, 0.5, "No EIS data", ha="center", va="center", transform=self.ax_bode_cap.transAxes)
+
+        self.ax_nyquist.set_title("Nyquist")
+        self.ax_nyquist.set_xlabel("Real(Z) [Ω]")
+        self.ax_nyquist.set_ylabel("-Imag(Z) [Ω]")
         self.ax_nyquist.grid(True)
 
-        self.ax_bode_mag.semilogx(result.frequency_hz, result.z_mag_ohm, color="#ff7f0e")
-        self.ax_bode_mag.set_title("Bode Magnitude")
-        self.ax_bode_mag.set_xlabel("Frequency [Hz]")
-        self.ax_bode_mag.set_ylabel("|Z| [Ω]")
-        self.ax_bode_mag.grid(True, which="both")
-
-        self.ax_bode_phase.semilogx(
-            result.frequency_hz, result.z_phase_deg, color="#2ca02c"
-        )
-        self.ax_bode_phase.set_title("Bode Phase")
+        self.ax_bode_phase.set_title("Bode phase")
         self.ax_bode_phase.set_xlabel("Frequency [Hz]")
         self.ax_bode_phase.set_ylabel("Phase [deg]")
         self.ax_bode_phase.grid(True, which="both")
 
+        self.ax_bode_cap.set_title("Bode capacitance")
+        self.ax_bode_cap.set_xlabel("Frequency [Hz]")
+        self.ax_bode_cap.set_ylabel("C(f) [F]")
+        self.ax_bode_cap.grid(True, which="both")
+
         self.figure.tight_layout()
         self.canvas.draw_idle()
+
+    def import_json(self) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import parameter set",
+            str(Path.cwd()),
+            "JSON files (*.json)",
+        )
+        if not file_path:
+            return
+
+        loaded = json.loads(Path(file_path).read_text(encoding="utf-8"))
+        for key, value in loaded.items():
+            field = self._field_defs.get(key)
+            widget = self._widgets.get(key)
+            if field and widget:
+                self._set_widget_value(widget, field, value)
+        self.statusBar().showMessage("Parameter set imported")
+
+    def export_json(self) -> None:
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export parameter set",
+            str(Path.cwd() / "ionmonger_parameters.json"),
+            "JSON files (*.json)",
+        )
+        if not file_path:
+            return
+
+        values = self._collect_values()
+        Path(file_path).write_text(json.dumps(values, indent=2), encoding="utf-8")
+        self.statusBar().showMessage("Parameter set exported")
 
     def export_csv(self) -> None:
         if self._last_result is None:
@@ -237,8 +336,8 @@ class MainWindow(QMainWindow):
 
         file_path, _ = QFileDialog.getSaveFileName(
             self,
-            "Export simulated spectrum",
-            str(Path.cwd() / "simulated_eis_spectrum.csv"),
+            "Export simulation output",
+            str(Path.cwd() / "ionmonger_output.csv"),
             "CSV files (*.csv)",
         )
         if not file_path:
@@ -255,7 +354,7 @@ class MainWindow(QMainWindow):
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Save plots",
-            str(Path.cwd() / "simulated_eis_plots.png"),
+            str(Path.cwd() / "ionmonger_plots.png"),
             "PNG files (*.png)",
         )
         if not file_path:
