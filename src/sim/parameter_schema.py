@@ -15,8 +15,8 @@ class ParameterField:
 
 
 SCHEMA: tuple[ParameterField, ...] = (
-    ParameterField("ionmonger_root", "IonMonger root", "Protocol & measurement mode", "path", "", "Folder containing master.m and Code/"),
-    ParameterField("matlab_command", "MATLAB command", "Protocol & measurement mode", "str", "matlab", "MATLAB executable command used for non-interactive batch runs."),
+    ParameterField("ionmonger_root", "IonMonger root", "Protocol & measurement mode", "path", r"C:\Users\sruiz\Documents\IonMonger-master", "Folder containing master.m and Code/"),
+    ParameterField("matlab_command", "MATLAB command", "Protocol & measurement mode", "str", r"C:\Program Files\MATLAB\R2026a\bin\matlab.exe", "MATLAB executable command used for non-interactive batch runs."),
     ParameterField("measurement_mode", "Measurement mode", "Protocol & measurement mode", "choice", "eis", "Choose impedance spectroscopy or JV/transient protocol.", ("eis", "jv")),
     ParameterField("light_intensity", "Light intensity (Sun eq.)", "Protocol & measurement mode", "float", 1.0, "Constant light intensity used in construct_protocol."),
     ParameterField("time_spacing", "time_spacing", "Protocol & measurement mode", "choice", "lin", "Spacing of section time points ('lin' or 'log').", ("lin", "log")),
