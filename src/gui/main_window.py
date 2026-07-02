@@ -153,12 +153,11 @@ class MainWindow(QMainWindow):
 
         # Left column: square I-V and square Nyquist.
         # Right column: 1.5× wider for rectangular Bode plots.
-        self.figure = Figure(figsize=(10, 7))
+        self.figure = Figure(figsize=(10, 7), layout="constrained")
         self.canvas = FigureCanvasQTAgg(self.figure)
         self.toolbar = NavigationToolbar2QT(self.canvas, self)
 
-        gs = GridSpec(2, 2, figure=self.figure, width_ratios=[1, 1.5],
-                      hspace=0.45, wspace=0.35)
+        gs = GridSpec(2, 2, figure=self.figure, width_ratios=[1, 1.5])
         self.ax_jv = self.figure.add_subplot(gs[0, 0])       # top-left
         self.ax_nyquist = self.figure.add_subplot(gs[1, 0])   # bottom-left
         self.ax_bode_phase = self.figure.add_subplot(gs[0, 1])  # top-right
