@@ -5,6 +5,7 @@ from pathlib import Path
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.figure import Figure
+from matplotlib.gridspec import GridSpec
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -150,14 +151,17 @@ class MainWindow(QMainWindow):
         panel = QWidget()
         layout = QVBoxLayout(panel)
 
-        self.figure = Figure(figsize=(9, 7), tight_layout=True)
+        # Left column: square I-V and square Nyquist.
+        # Right column: 1.5× wider for rectangular Bode plots.
+        self.figure = Figure(figsize=(10, 7), layout="constrained")
         self.canvas = FigureCanvasQTAgg(self.figure)
         self.toolbar = NavigationToolbar2QT(self.canvas, self)
 
-        self.ax_jv = self.figure.add_subplot(2, 2, 1)
-        self.ax_nyquist = self.figure.add_subplot(2, 2, 2)
-        self.ax_bode_phase = self.figure.add_subplot(2, 2, 3)
-        self.ax_bode_cap = self.figure.add_subplot(2, 2, 4)
+        gs = GridSpec(2, 2, figure=self.figure, width_ratios=[1, 1.5])
+        self.ax_jv = self.figure.add_subplot(gs[0, 0])       # top-left
+        self.ax_nyquist = self.figure.add_subplot(gs[1, 0])   # bottom-left
+        self.ax_bode_phase = self.figure.add_subplot(gs[0, 1])  # top-right
+        self.ax_bode_cap = self.figure.add_subplot(gs[1, 1])    # bottom-right
 
         layout.addWidget(self.toolbar)
         layout.addWidget(self.canvas)
@@ -261,15 +265,17 @@ class MainWindow(QMainWindow):
         self.ax_bode_phase.clear()
         self.ax_bode_cap.clear()
 
+        # --- I-V (top-left) ---
         if result.jv_voltage_v is not None and result.jv_current_ma_cm2 is not None:
             self.ax_jv.plot(result.jv_voltage_v, result.jv_current_ma_cm2, color="#1f77b4")
         else:
             self.ax_jv.text(0.5, 0.5, "No JV data", ha="center", va="center", transform=self.ax_jv.transAxes)
-        self.ax_jv.set_title("JV")
-        self.ax_jv.set_xlabel("V [V]")
-        self.ax_jv.set_ylabel("J [mA/cm²]")
+        self.ax_jv.set_title("Current–Voltage (I–V)")
+        self.ax_jv.set_xlabel("Voltage, $V$ (V)")
+        self.ax_jv.set_ylabel("Current Density, $J$ (mA cm$^{-2}$)")
         self.ax_jv.grid(True)
 
+        # --- Nyquist Z′–Z″ (bottom-left, isometric) ---
         if result.frequency_hz is not None and result.impedance_ohm is not None:
             self.ax_nyquist.plot(result.z_real_ohm, -result.z_imag_ohm, color="#ff7f0e")
             self.ax_bode_phase.semilogx(result.frequency_hz, result.z_phase_deg, color="#2ca02c")
@@ -279,22 +285,24 @@ class MainWindow(QMainWindow):
             self.ax_bode_phase.text(0.5, 0.5, "No EIS data", ha="center", va="center", transform=self.ax_bode_phase.transAxes)
             self.ax_bode_cap.text(0.5, 0.5, "No EIS data", ha="center", va="center", transform=self.ax_bode_cap.transAxes)
 
-        self.ax_nyquist.set_title("Nyquist")
-        self.ax_nyquist.set_xlabel("Real(Z) [Ω]")
-        self.ax_nyquist.set_ylabel("-Imag(Z) [Ω]")
+        self.ax_nyquist.set_title("Nyquist ($Z'$–$Z''$)")
+        self.ax_nyquist.set_xlabel(r"Real Impedance, $Z'$ ($\Omega$)")
+        self.ax_nyquist.set_ylabel(r"Neg. Imaginary Impedance, $-Z''$ ($\Omega$)")
+        self.ax_nyquist.set_aspect("equal", adjustable="box")
         self.ax_nyquist.grid(True)
 
-        self.ax_bode_phase.set_title("Bode phase")
-        self.ax_bode_phase.set_xlabel("Frequency [Hz]")
-        self.ax_bode_phase.set_ylabel("Phase [deg]")
+        # --- Phase–Frequency (top-right) ---
+        self.ax_bode_phase.set_title("Phase Angle vs. Frequency")
+        self.ax_bode_phase.set_xlabel("Frequency, $f$ (Hz)")
+        self.ax_bode_phase.set_ylabel("Phase Angle, $\\varphi$ (°)")
         self.ax_bode_phase.grid(True, which="both")
 
-        self.ax_bode_cap.set_title("Bode capacitance")
-        self.ax_bode_cap.set_xlabel("Frequency [Hz]")
-        self.ax_bode_cap.set_ylabel("C(f) [F]")
+        # --- Capacitance–Frequency (bottom-right) ---
+        self.ax_bode_cap.set_title("Capacitance vs. Frequency")
+        self.ax_bode_cap.set_xlabel("Frequency, $f$ (Hz)")
+        self.ax_bode_cap.set_ylabel("Capacitance, $C(f)$ (F)")
         self.ax_bode_cap.grid(True, which="both")
 
-        self.figure.tight_layout()
         self.canvas.draw_idle()
 
     def import_json(self) -> None:
