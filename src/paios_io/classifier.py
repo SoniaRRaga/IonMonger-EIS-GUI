@@ -56,6 +56,10 @@ def classify_series(spectra: Sequence[Spectrum]) -> str:
     return UNKNOWN
 
 
+def _fmt(v) -> str:
+    return "?" if v is None else f"{v:.4g}"
+
+
 def classify(spectra: Sequence[Spectrum]) -> list[str]:
     """Per-spectrum label (same order as input), e.g. 'bias=0.8', 'light=0.1'."""
     kind = classify_series(spectra)
@@ -63,11 +67,11 @@ def classify(spectra: Sequence[Spectrum]) -> list[str]:
     for s in spectra:
         d = _settings(s)
         if kind == BIAS:
-            out.append(f"bias={d.get('bias')}")
+            out.append(f"bias={_fmt(d.get('bias'))}")
         elif kind == LIGHT:
-            out.append(f"light={d.get('light')}")
+            out.append(f"light={_fmt(d.get('light'))}")
         elif kind == BIAS_LIGHT:
-            out.append(f"bias={d.get('bias')}_light={d.get('light')}")
+            out.append(f"bias={_fmt(d.get('bias'))}_light={_fmt(d.get('light'))}")
         else:
             out.append("")
     return out

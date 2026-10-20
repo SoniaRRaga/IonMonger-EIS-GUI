@@ -38,13 +38,13 @@ def test_native_multi_sweep(tmp_path):
     assert specs[0].zre[1] == 6.0 and specs[0].zim[1] == -2.0
     assert specs[1].sweep["light"] == 1.0
     assert classify_series(specs) == "varying illumination"
-    assert classify(specs) == ["light=0.0099999998", "light=1.0"]
+    assert classify(specs) == ["light=0.01", "light=1"]
 
 
 def test_convert(tmp_path):
     out = convert_files([make(tmp_path / "a.txt")], tmp_path / "out", log=lambda m: None)
     assert len(out) == 2
-    assert out[0].name == "a_light=0.0099999998.txt"
+    assert out[0].name == "a_light=0.01.txt"
     first = out[0].read_text().splitlines()[0].split("\t")
     assert len(first) == 3 and float(first[0]) == 4e6
 
@@ -66,3 +66,21 @@ def test_single_dark_inactive_sweep(tmp_path):
     assert s.n_points == 3 and s.sweep == {} and s.settings["light"] == 0.0
     out = convert_files([p], tmp_path / "o", log=lambda m: None)
     assert [x.name for x in out] == ["44-is-dark_1d.txt"]
+
+
+def test_bias_sweep_with_nan_points(tmp_path):
+    p = tmp_path / "bias.txt"
+    text = HEADER.replace("Sweep 1 - Offset Light Intensity (1)", "Sweep 1 - Offset Voltage (V)")
+    rows = []
+    for v in (0.0, 0.29999999, 0.8):
+        for i in range(2):
+            f = 4e6 / 10**i
+            if v == 0.8:
+                rows.append(f"{v}\t{f}\t0\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN")
+            else:
+                rows.append(f"{v}\t{f}\t0\t10\t0.9\t{f}\t{v}\t1e-5\t{5 + i}\t{-2 * i}\t1e-9\t100")
+    p.write_text(text + "\n".join(rows) + "\n")
+    specs = read_paios_all(p)
+    assert len(specs) == 2
+    assert classify_series(specs) == "varying bias"
+    assert classify(specs) == ["bias=0", "bias=0.3"]

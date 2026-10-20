@@ -115,6 +115,12 @@ def _read_native(path: Path, lines: list[str], meta: dict, coldefs: dict) -> lis
     groups: dict[tuple, list[int]] = {}
     for r in range(len(arr)):
         groups.setdefault(tuple(arr[r, outer]), []).append(r)
+    # failed points are exported as NaN: drop them, and drop spectra that end up empty
+    ok = np.isfinite(arr[:, [cols["freq"], cols["zre"], cols["zim"]]]).all(axis=1)
+    groups = {k: [r for r in idx if ok[r]] for k, idx in groups.items()}
+    groups = {k: idx for k, idx in groups.items() if idx}
+    if not groups:
+        raise ValueError(f"{path.name}: no valid (non-NaN) impedance data")
     base = _header_settings(meta)
     out = []
     for key, idx in groups.items():
