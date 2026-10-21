@@ -44,9 +44,13 @@ def test_native_multi_sweep(tmp_path):
 def test_convert(tmp_path):
     out = convert_files([make(tmp_path / "a.txt")], tmp_path / "out", log=lambda m: None)
     assert len(out) == 2
-    assert out[0].name == "a_light=0.01.txt"
-    first = out[0].read_text().splitlines()[0].split("\t")
-    assert len(first) == 3 and float(first[0]) == 4e6
+    assert out[0].name == "1_light=0.01.txt"
+    lines = out[0].read_text().splitlines()
+    assert lines[0].startswith("ZView Calculated Data File")
+    assert lines[9] == "3" and lines[10].startswith("Freq (Hz)\tDC-Curr(A)")
+    first, last = lines[11].split("\t"), lines[-1].split("\t")
+    assert len(first) == 9 and float(first[0]) < float(last[0]) == 4e6
+    assert float(first[2]) == 0.09 and float(first[1]) == 1e-5 and first[0] == "4.00000000E+04"
 
 
 def test_generic_header(tmp_path):
@@ -65,7 +69,7 @@ def test_single_dark_inactive_sweep(tmp_path):
     (s,) = read_paios_all(p)
     assert s.n_points == 3 and s.sweep == {} and s.settings["light"] == 0.0
     out = convert_files([p], tmp_path / "o", log=lambda m: None)
-    assert [x.name for x in out] == ["44-is-dark_1d.txt"]
+    assert [x.name for x in out] == ["1_44-is-dark_1d.txt"]
 
 
 def test_bias_sweep_with_nan_points(tmp_path):

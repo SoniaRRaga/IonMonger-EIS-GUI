@@ -36,6 +36,8 @@ class Spectrum:
     freq: np.ndarray
     zre: np.ndarray
     zim: np.ndarray  # signed imaginary part of Z (as stored in the file)
+    dc_pot: np.ndarray | None = None  # measured DC voltage (V), if present
+    dc_curr: np.ndarray | None = None  # measured DC current (A), if present
     metadata: dict = field(default_factory=dict)
     settings: dict = field(default_factory=dict)  # canonical: bias, light (floats)
     sweep: dict = field(default_factory=dict)  # outer-sweep values for this spectrum
@@ -122,13 +124,16 @@ def _read_native(path: Path, lines: list[str], meta: dict, coldefs: dict) -> lis
     if not groups:
         raise ValueError(f"{path.name}: no valid (non-NaN) impedance data")
     base = _header_settings(meta)
+    pot = next((i for i, n in enumerate(names) if re.match(r"^offset voltage", n.lower())), None)
+    cur = next((i for i, n in enumerate(names) if re.match(r"^offset current", n.lower())), None)
     out = []
     for key, idx in groups.items():
         a = arr[idx]
         sweep = {_canon_name(stripped[c]): float(v) for c, v in zip(outer, key)}
         settings = {**base, **{k: v for k, v in sweep.items() if k in SETTING_PROFILES}}
         out.append(Spectrum(path, a[:, cols["freq"]], a[:, cols["zre"]], a[:, cols["zim"]],
-                            meta, settings, sweep))
+                            a[:, pot] if pot is not None else None,
+                            a[:, cur] if cur is not None else None, meta, settings, sweep))
     return out
 
 
@@ -160,7 +165,7 @@ def _read_generic(path: Path, lines: list[str]) -> list[Spectrum]:
     if not rows:
         raise ValueError(f"{path.name}: impedance table is empty")
     a = np.array(rows, dtype=float)
-    return [Spectrum(path, a[:, 0], a[:, 1], a[:, 2], meta, _header_settings(meta))]
+    return [Spectrum(path, a[:, 0], a[:, 1], a[:, 2], metadata=meta, settings=_header_settings(meta))]
 
 
 def read_paios_all(path: str | Path) -> list[Spectrum]:

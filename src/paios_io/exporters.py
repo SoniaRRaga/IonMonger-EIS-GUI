@@ -6,17 +6,42 @@ import re
 from collections.abc import Iterable
 from pathlib import Path
 
+import numpy as np
+
 from .classifier import classify, classify_series
 from .reader import Spectrum, read_paios_all
 
 
+ZVIEW_HEADER = (
+    "ZView Calculated Data File: Version 1.1\n"
+    "Raw Data\n"
+    "Sweep Frequency: Control Voltage\n"
+    'Date: 04-10-2019     "Time: 04:24:42\n'
+    "Zahner Zennium/IM6\n"
+    "\n"
+    "c:\\data\\asonia\\boer lightsoak 20190408\\8%_a\\8a_islight_101.ism\n"
+    "Frequency\n"
+    "0,2,0,1,4.00000E-01,2.00000E+06\n"
+    "{n}\n"
+    "Freq (Hz)\tDC-Curr(A)\tDC-Pot(V)\tTime(Sec)\tZ'(Ohm)\tZ''(Ohm)\tGD\tX\tY\n"
+)
+
+
 def export_zview(spec: Spectrum, out_path: str | Path, *, negate_imag: bool = False) -> Path:
-    """Write freq, Z', Z'' as tab-separated text, sorted by decreasing frequency."""
+    """Write a ZView file: fixed header, then 9 tab-separated columns, increasing frequency."""
     out_path = Path(out_path)
-    order = spec.freq.argsort()[::-1]
+    order = spec.freq.argsort()
     sign = -1.0 if negate_imag else 1.0
-    lines = [f"{spec.freq[i]:.8e}\t{spec.zre[i]:.8e}\t{sign * spec.zim[i]:.8e}" for i in order]
-    out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    zeros = np.zeros(spec.n_points)
+    pot = spec.dc_pot if spec.dc_pot is not None else zeros
+    cur = spec.dc_curr if spec.dc_curr is not None else zeros
+    lines = []
+    for i in order:
+        vals = [spec.freq[i], cur[i], pot[i], 0.0, spec.zre[i], sign * spec.zim[i], 0.0, 0.0, 0.0]
+        lines.append("\t".join(f"{v:.8E}" for v in vals))
+    with out_path.open("w", encoding="utf-8", newline="\n") as f:
+        f.write(ZVIEW_HEADER.format(n=spec.n_points))
+        f.write("\n".join(lines) + "\n")
     return out_path
 
 
@@ -38,15 +63,10 @@ def convert_files(paths: Iterable[str | Path], out_dir: str | Path, *,
     if not specs:
         return []
     log(f"Detected measurement type: {classify_series(specs)}")
-    written, used = [], set()
-    for s, label in zip(specs, classify(specs)):
+    written = []
+    for n, (s, label) in enumerate(zip(specs, classify(specs)), start=1):
         label = _safe(label)
-        stem = f"{s.path.stem}_{label}" if label and sum(x.path == s.path for x in specs) > 1 else (label or s.path.stem)
-        name, k = f"{stem}.txt", 1
-        while name in used:
-            k += 1
-            name = f"{stem}_{k}.txt"
-        used.add(name)
+        name = f"{n}_{label}.txt" if label else f"{n}_{s.path.stem}.txt"
         written.append(export_zview(s, out_dir / name, negate_imag=negate_imag))
         log(f"OK   {s.path.name} -> {name} ({s.n_points} points)")
     return written
